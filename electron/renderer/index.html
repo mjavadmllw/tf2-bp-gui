@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8" />
+<title>TF2 Backpack Expander</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="titlebar">
+    <div class="titlebar-drag">
+      <span class="titlebar-dot"></span>
+      <span class="titlebar-title">TF2 Backpack Expander</span>
+    </div>
+    <div class="titlebar-controls">
+      <button id="btn-about" class="titlebar-btn" title="About">?</button>
+      <button id="btn-minimize" class="titlebar-btn" title="Minimize">–</button>
+      <button id="btn-close" class="titlebar-btn titlebar-btn-close" title="Close">✕</button>
+    </div>
+  </div>
+
+  <main class="app">
+    <!-- Login view -->
+    <section id="view-login" class="view active">
+      <div class="login-card">
+        <div class="login-hero">
+          <div class="hero-icon">🎒</div>
+          <h1>Sign in to Steam</h1>
+          <p class="muted">Sign in with your TF2 account to manage your Backpack Expander</p>
+        </div>
+
+        <label class="field">
+          <span>Username</span>
+          <input id="input-username" type="text" autocomplete="username" placeholder="username" />
+        </label>
+
+        <label class="field">
+          <span>Password</span>
+          <div class="password-row">
+            <input id="input-password" type="password" autocomplete="current-password" placeholder="••••••••" />
+            <button id="btn-toggle-pass" type="button" class="ghost-btn">👁</button>
+          </div>
+        </label>
+
+        <label class="checkbox-field">
+          <input id="input-remember" type="checkbox" />
+          <span>Remember me (encrypted)</span>
+        </label>
+
+        <button id="btn-login" class="primary-btn">
+          <span class="btn-label">Sign in</span>
+          <span class="spinner hidden"></span>
+        </button>
+
+        <p id="login-error" class="error-text hidden"></p>
+      </div>
+    </section>
+
+    <!-- Dashboard view -->
+    <section id="view-dashboard" class="view">
+      <div class="profile-row">
+        <div id="profile-avatar" class="profile-avatar">🙂</div>
+        <div class="profile-info">
+          <span id="profile-name" class="profile-name">Loading...</span>
+          <div class="status-info">
+            <span id="status-dot" class="status-dot"></span>
+            <span id="status-text" class="status-text">Connecting...</span>
+          </div>
+        </div>
+        <div class="profile-actions">
+          <button id="btn-toggle-game" class="ghost-btn small" title="Leave or rejoin TF2">Leave Game</button>
+          <button id="btn-logout" class="ghost-btn small">Sign out</button>
+        </div>
+      </div>
+
+      <div class="stats-row">
+        <div class="stat-chip">
+          <span class="stat-label">Slots</span>
+          <span id="stat-slots" class="stat-value">–</span>
+        </div>
+        <div class="stat-chip">
+          <span class="stat-label">Account type</span>
+          <span id="stat-premium" class="stat-value">–</span>
+        </div>
+      </div>
+
+      <div class="tab-bar">
+        <button id="tab-backpack" class="tab-btn active" data-tab="backpack">Backpack</button>
+        <button id="tab-inventory" class="tab-btn" data-tab="inventory">Inventory</button>
+      </div>
+
+      <div id="tab-content" class="tab-content">
+        <!-- Backpack panel -->
+        <div id="panel-backpack" class="tab-panel active">
+          <div class="item-card-wrap">
+            <button id="btn-need-backpack" class="need-backpack-badge" type="button">Need backpack?</button>
+            <div id="item-card" class="item-card">
+              <div class="item-skeleton">
+                <div class="skeleton-img shimmer"></div>
+                <div class="skeleton-line shimmer"></div>
+                <div class="skeleton-line short shimmer"></div>
+              </div>
+            </div>
+
+            <div class="card-actions">
+              <button id="btn-reload" class="ghost-btn full">
+                <span class="refresh-icon">⟳</span> Refresh inventory
+              </button>
+              <button id="btn-use" class="primary-btn full" disabled>Use item</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Inventory panel -->
+        <div id="panel-inventory" class="tab-panel">
+          <div class="inventory-toolbar">
+            <input id="input-search" type="text" class="search-input" placeholder="Search items..." />
+            <button id="btn-inventory-reload" class="ghost-btn" title="Refresh inventory">
+              <span class="refresh-icon">⟳</span>
+            </button>
+          </div>
+          <div id="inventory-count" class="inventory-count">– items</div>
+          <div id="inventory-grid" class="inventory-grid"></div>
+          <p id="inventory-empty" class="muted inventory-empty hidden">No items found.</p>
+        </div>
+
+        <!-- Out-of-game overlay -->
+        <div id="out-of-game-overlay" class="out-of-game-overlay hidden">
+          <div class="out-of-game-icon">🎮</div>
+          <div class="out-of-game-title">You're not in the game</div>
+          <p class="muted">Join Team Fortress 2 to manage your backpack and inventory.</p>
+          <button id="btn-join-from-overlay" class="primary-btn">Join Game</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Steam Guard modal -->
+  <div id="modal-guard" class="modal-overlay hidden">
+    <div class="modal">
+      <h2>Steam Guard code</h2>
+      <p id="guard-domain-text" class="muted">Enter the code you received</p>
+      <input id="input-guard-code" type="text" maxlength="8" placeholder="XXXXX" class="code-input" />
+      <div class="modal-actions">
+        <button id="btn-guard-submit" class="primary-btn full">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirm use modal -->
+  <div id="modal-confirm" class="modal-overlay hidden">
+    <div class="modal">
+      <h2>Use Backpack Expander?</h2>
+      <p class="muted">This item will be consumed and your backpack capacity will increase. This action cannot be undone.</p>
+      <div class="modal-actions two">
+        <button id="btn-confirm-cancel" class="ghost-btn full">Cancel</button>
+        <button id="btn-confirm-use" class="primary-btn full">Confirm &amp; use</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirm delete modal -->
+  <div id="modal-delete" class="modal-overlay hidden">
+    <div class="modal modal-danger">
+      <h2>Delete item?</h2>
+      <p class="muted">This will permanently delete <strong id="delete-item-name">this item</strong> from your backpack. This cannot be undone.</p>
+      <div class="modal-actions two">
+        <button id="btn-delete-cancel" class="ghost-btn full">Cancel</button>
+        <button id="btn-delete-confirm" class="danger-btn full">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirm sign out modal -->
+  <div id="modal-logout" class="modal-overlay hidden">
+    <div class="modal">
+      <h2>Sign out?</h2>
+      <p class="muted">You'll need to sign in again to continue managing your backpack.</p>
+      <div class="modal-actions two">
+        <button id="btn-logout-cancel" class="ghost-btn full">Cancel</button>
+        <button id="btn-logout-confirm" class="primary-btn full">Sign out</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Need backpack modal -->
+  <div id="modal-buy-backpack" class="modal-overlay hidden">
+    <div class="modal">
+      <h2>Need a Backpack Expander?</h2>
+      <ol class="buy-steps">
+        <li>Sign in to your Steam account in your browser first.</li>
+        <li>Set the quantity in the field below, then click the button.</li>
+        <li>Each Backpack Expander costs $1 — make sure you have enough balance in your Steam Wallet.</li>
+      </ol>
+      <label class="field">
+        <span>Quantity</span>
+        <input id="input-buy-quantity" type="number" min="1" step="1" value="1" />
+      </label>
+      <div class="modal-actions two">
+        <button id="btn-buy-cancel" class="ghost-btn full">Close</button>
+        <a id="link-buy-confirm" class="primary-btn full about-link" href="http://store.steampowered.com/buyitem/440/5050/1" target="_blank" rel="noopener noreferrer">Buy on Steam</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- About modal -->
+  <div id="modal-about" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="about-hero">
+        <div class="hero-icon">🎒</div>
+        <h2>TF2 Backpack Expander</h2>
+        <p class="muted">Made by <strong>mjavad_mllw</strong></p>
+      </div>
+      <div class="about-links">
+        <a id="link-telegram" class="ghost-btn full about-link" href="https://t.me/Mjavad_mllw" target="_blank" rel="noopener noreferrer">
+          <span>💬</span> Telegram
+        </a>
+        <a id="link-github" class="ghost-btn full about-link" href="https://github.com/mjavadmllw" target="_blank" rel="noopener noreferrer">
+          <span>🐙</span> GitHub
+        </a>
+      </div>
+      <div class="modal-actions">
+        <button id="btn-about-close" class="primary-btn full">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-container" class="toast-container"></div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

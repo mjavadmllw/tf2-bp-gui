@@ -1,0 +1,40 @@
+{
+  "name": "backpack-user",
+  "version": "1.0.1",
+  "description": "TF2 Backpack Expander - GUI",
+  "main": "electron/main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "electron electron/main.js",
+    "dist": "electron-builder"
+  },
+  "keywords": [],
+  "author": "mjavad_mllw",
+  "license": "ISC",
+  "dependencies": {
+    "steam-totp": "^2.1.2",
+    "steam-user": "^5.2.3",
+    "steamcommunity": "^3.49.0",
+    "tf2": "^4.0.0"
+  },
+  "devDependencies": {
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.mjavadmllw.tf2backpackexpander",
+    "productName": "TF2 Backpack Expander",
+    "files": [
+      "electron/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "win": {
+      "target": "portable",
+      "icon": "build/icon.ico"
+    }
+  }
+}
