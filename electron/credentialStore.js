@@ -39,4 +39,10 @@ function clear() {
   }
 }
 
-module.exports = { isAvailable, save, load, clear };
+function clearAll() {
+  if (fs.existsSync(STORE_DIR)) {
+    fs.rmSync(STORE_DIR, { recursive: true, force: true });
+  }
+}
+
+module.exports = { isAvailable, save, load, clear, clearAll };

@@ -1,11 +1,73 @@
+const https = require("https");
 const SteamUser = require("steam-user");
 const TF2 = require("tf2");
 const SteamCommunity = require("steamcommunity");
 const EventEmitter = require("events");
+const logger = require("./logger.js");
 
 const EXPANDER_DEFINDEX = 5050;
 const TF2_APP_ID = 440;
 const TF2_CONTEXT_ID = 2;
+const FETCH_MIN_INTERVAL_MS = 5000;
+
+// Public, unauthenticated mirror of TF2's own resource file — used purely as a
+// name/icon fallback for items the Steam Community inventory endpoint can't see yet
+// (that endpoint doesn't reflect changes made in-game — crafting, deleting, etc. —
+// until the game session ends, no matter how many times it's re-fetched).
+const TF2_LANG_URL = "https://raw.githubusercontent.com/SteamDatabase/GameTracking-TF2/master/tf/resource/tf_english.txt";
+
+let cachedLangText = null;
+
+function fetchLanguageFile() {
+  if (cachedLangText) return Promise.resolve(cachedLangText);
+
+  return new Promise((resolve, reject) => {
+    https
+      .get(TF2_LANG_URL, (res) => {
+        if (res.statusCode !== 200) {
+          res.resume();
+          reject(new Error(`HTTP ${res.statusCode}`));
+          return;
+        }
+        const chunks = [];
+        res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", () => {
+          cachedLangText = Buffer.concat(chunks).toString("utf8");
+          resolve(cachedLangText);
+        });
+      })
+      .on("error", reject);
+  });
+}
+
+// Falls back to TF2's own item schema (fetched via the GC, not Steam) for the name
+// and icon of an item the Community inventory fetch hasn't resolved a description
+// for. image_inventory is a raw game-asset path, not a CDN URL — Valve does serve a
+// rendered icon at this basename under apps/440/icons/, at least for simple/stock
+// items like crafting materials (verified for Scrap/Reclaimed/Refined Metal).
+function resolveSchemaInfo(itemSchema, langLower, defindex) {
+  if (!itemSchema || !itemSchema.items) return null;
+  const entry = itemSchema.items[String(defindex)];
+  if (!entry) return null;
+
+  let name = null;
+  const token = entry.item_name;
+  if (token) {
+    if (!token.startsWith("#")) {
+      name = token;
+    } else if (langLower) {
+      name = langLower.get(token.slice(1).toLowerCase()) || null;
+    }
+  }
+
+  let imageUrl = null;
+  if (entry.image_inventory) {
+    const base = entry.image_inventory.split("/").pop();
+    imageUrl = `https://steamcdn-a.akamaihd.net/apps/440/icons/${base}.png`;
+  }
+
+  return { name, imageUrl };
+}
 
 const ERROR_MESSAGES = {
   5: "Incorrect username or password.",
@@ -26,6 +88,29 @@ function imageUrlFor(iconUrl) {
   return iconUrl ? `https://steamcommunity-a.akamaihd.net/economy/image/${iconUrl}/` : null;
 }
 
+// Qualities and item categories that are easy to delete by mistake in a bulk
+// selection and are either high-value or awkward/costly to replace.
+const PROTECTED_QUALITIES = {
+  5: "Unusual quality",
+  14: "Collector's quality",
+};
+
+const PROTECTED_NAME_PATTERNS = [
+  { pattern: /\bkey\b/i, reason: "Key" },
+  { pattern: /\bticket\b/i, reason: "Ticket" },
+];
+
+function getProtectionReason(item, description) {
+  if (item.def_index === EXPANDER_DEFINDEX) return "Backpack Expander";
+  if (PROTECTED_QUALITIES[item.quality]) return PROTECTED_QUALITIES[item.quality];
+
+  const name = (description && description.name) || "";
+  for (const { pattern, reason } of PROTECTED_NAME_PATTERNS) {
+    if (pattern.test(name)) return reason;
+  }
+  return null;
+}
+
 class SteamBotService extends EventEmitter {
   constructor() {
     super();
@@ -36,6 +121,11 @@ class SteamBotService extends EventEmitter {
     this.inGame = true;
     this.descriptions = new Map(); // id -> { name, imageUrl, type, marketHashName }
     this._pendingGuardCallback = null;
+    this._fullInventoryDebounce = null;
+    this._descriptionRetryTimer = null;
+    this._fetchingInventory = false;
+    this._lastInventoryFetchAt = 0;
+    this._langLower = null;
   }
 
   login({ username, password }) {
@@ -47,6 +137,17 @@ class SteamBotService extends EventEmitter {
     this.tf2 = new TF2(this.client);
     this.community = new SteamCommunity();
     this.descriptions = new Map();
+    this._langLower = null;
+
+    fetchLanguageFile()
+      .then((text) => {
+        if (!this.tf2) return;
+        this.tf2.setLang(text);
+        this._langLower = new Map(Object.keys(this.tf2.lang || {}).map((k) => [k.toLowerCase(), this.tf2.lang[k]]));
+      })
+      .catch((err) => {
+        logger.warn("Could not load TF2 localization file (schema name/icon fallback disabled): " + err.message);
+      });
 
     this.emit("status", { state: "connecting", message: "Connecting to Steam..." });
 
@@ -129,7 +230,9 @@ class SteamBotService extends EventEmitter {
     });
 
     this.tf2.on("itemChanged", () => {
-      this._emitFullInventory();
+      // A backpack-wide sort can fire hundreds/thousands of these back-to-back;
+      // debounce so we broadcast the full inventory once it settles instead of once per item.
+      this._scheduleFullInventoryEmit();
     });
 
     this.tf2.on("itemRemoved", (item) => {
@@ -139,6 +242,19 @@ class SteamBotService extends EventEmitter {
       this.emit("deleteResult", { success: true, itemId: item.id });
       this.rescanBackpack();
       this._emitFullInventory();
+    });
+
+    this.tf2.on("craftingComplete", (recipe, itemsGained) => {
+      if (recipe === -1) {
+        this.emit("craftResult", { success: false, error: "The game didn't recognize that as a valid recipe." });
+      } else {
+        this.emit("craftResult", { success: true, itemsGained });
+      }
+      this.rescanBackpack();
+      this._emitFullInventory();
+      // Crafted items are brand new, so they'll show up with no name/image until
+      // the user reloads the inventory — deliberately not auto-fetching here to
+      // avoid hitting Steam's Community API rate limit after repeated crafts.
     });
   }
 
@@ -161,12 +277,32 @@ class SteamBotService extends EventEmitter {
   _fetchFullInventory() {
     if (!this.client.steamID) return;
 
+    // Steam's Community inventory endpoint rejects requests that come in too soon
+    // after a previous one ("duplicate request... ignored this time") — never let
+    // two overlap, and never fire again within FETCH_MIN_INTERVAL_MS of the last one.
+    // Anything that arrives too soon is deferred instead of dropped.
+    const elapsed = Date.now() - this._lastInventoryFetchAt;
+    if (this._fetchingInventory || elapsed < FETCH_MIN_INTERVAL_MS) {
+      clearTimeout(this._descriptionRetryTimer);
+      this._descriptionRetryTimer = setTimeout(
+        () => this._fetchFullInventory(),
+        this._fetchingInventory ? 1000 : FETCH_MIN_INTERVAL_MS - elapsed
+      );
+      return;
+    }
+
+    clearTimeout(this._descriptionRetryTimer);
+    this._fetchingInventory = true;
+    this._lastInventoryFetchAt = Date.now();
+
     this.community.getUserInventoryContents(
       this.client.steamID,
       TF2_APP_ID,
       TF2_CONTEXT_ID,
       false,
       (err, items) => {
+        this._fetchingInventory = false;
+
         if (err) {
           this.emit("status", { state: "warning", message: "Could not load item images: " + err.message });
           return;
@@ -184,6 +320,11 @@ class SteamBotService extends EventEmitter {
 
         this.rescanBackpack();
         this._emitFullInventory();
+        // Note: while the current TF2 game session is active, this snapshot is
+        // whatever it was before this session started — items crafted, deleted, or
+        // otherwise changed in-game won't show up here until the session ends.
+        // Retrying wouldn't help; the schema-based fallback in _emitFullInventory
+        // covers the name/icon for anything Community doesn't know about yet.
       }
     );
   }
@@ -214,7 +355,15 @@ class SteamBotService extends EventEmitter {
   }
 
   refreshFullInventory() {
-    this._emitFullInventory();
+    // Re-fetch descriptions from Steam Community too, not just the GC backpack cache —
+    // otherwise items that appeared since the last description fetch (e.g. after a
+    // manual reload) show up with no name/image because they were never resolved.
+    this._fetchFullInventory();
+  }
+
+  _scheduleFullInventoryEmit() {
+    clearTimeout(this._fullInventoryDebounce);
+    this._fullInventoryDebounce = setTimeout(() => this._emitFullInventory(), 200);
   }
 
   _emitFullInventory() {
@@ -225,13 +374,18 @@ class SteamBotService extends EventEmitter {
 
     const items = this.tf2.backpack.map((item) => {
       const description = this.descriptions.get(String(item.id));
+      const schemaInfo = description ? null : resolveSchemaInfo(this.tf2.itemSchema, this._langLower, item.def_index);
+      const protectedReason = getProtectionReason(item, description || schemaInfo);
       return {
         id: item.id,
         defindex: item.def_index,
         quality: item.quality,
-        name: (description && description.name) || `Item #${item.def_index}`,
-        imageUrl: description ? description.imageUrl : null,
+        name: (description && description.name) || (schemaInfo && schemaInfo.name) || `Item #${item.def_index}`,
+        imageUrl: description ? description.imageUrl : schemaInfo ? schemaInfo.imageUrl : null,
         type: (description && description.type) || "",
+        position: item.position || 0,
+        protected: !!protectedReason,
+        protectedReason,
       };
     });
 
@@ -278,6 +432,64 @@ class SteamBotService extends EventEmitter {
     }
   }
 
+  craftItems(itemIds) {
+    if (!this.tf2 || !this.tf2.haveGCSession) {
+      this.emit("craftResult", { success: false, error: "Not connected to the Game Coordinator." });
+      return;
+    }
+
+    try {
+      this.tf2.craft(itemIds);
+    } catch (err) {
+      this.emit("craftResult", { success: false, error: friendlyError(err) });
+    }
+  }
+
+  sortBackpackByName() {
+    if (!this.tf2 || !this.tf2.haveGCSession) {
+      this.emit("sortResult", { success: false, error: "Not connected to the Game Coordinator." });
+      return;
+    }
+    if (!this.tf2.backpack || this.tf2.backpack.length === 0) {
+      this.emit("sortResult", { success: false, error: "Your backpack is empty." });
+      return;
+    }
+
+    try {
+      const sorted = [...this.tf2.backpack].sort((a, b) => {
+        const nameA = (this.descriptions.get(String(a.id)) || {}).name || "";
+        const nameB = (this.descriptions.get(String(b.id)) || {}).name || "";
+        return nameA.localeCompare(nameB);
+      });
+      const itemPositions = sorted.map((item, index) => ({ item_id: item.id, position: index + 1 }));
+      this.tf2.setPositions(itemPositions);
+      this.emit("sortResult", { success: true });
+    } catch (err) {
+      this.emit("sortResult", { success: false, error: friendlyError(err) });
+    }
+  }
+
+  sortBackpackDefault() {
+    if (!this.tf2 || !this.tf2.haveGCSession) {
+      this.emit("sortResult", { success: false, error: "Not connected to the Game Coordinator." });
+      return;
+    }
+    if (!this.tf2.backpack || this.tf2.backpack.length === 0) {
+      this.emit("sortResult", { success: false, error: "Your backpack is empty." });
+      return;
+    }
+
+    try {
+      // The GC's sort_type codes for its native backpack sort aren't publicly
+      // documented anywhere (even node-tf2's own author says so) — 0 is the
+      // field's protocol-level default value, used here as the best-effort choice.
+      this.tf2.sortBackpack(0);
+      this.emit("sortResult", { success: true });
+    } catch (err) {
+      this.emit("sortResult", { success: false, error: friendlyError(err) });
+    }
+  }
+
   toggleGame() {
     if (!this.client || !this.loggedIn) return;
     this.inGame = !this.inGame;
@@ -295,6 +507,10 @@ class SteamBotService extends EventEmitter {
   }
 
   _teardown() {
+    clearTimeout(this._fullInventoryDebounce);
+    clearTimeout(this._descriptionRetryTimer);
+    this._fetchingInventory = false;
+    this._lastInventoryFetchAt = 0;
     if (this.client) {
       try {
         this.client.logOff();
@@ -312,6 +528,7 @@ class SteamBotService extends EventEmitter {
     this.loggedIn = false;
     this.descriptions = new Map();
     this._pendingGuardCallback = null;
+    this._langLower = null;
   }
 }
 

@@ -59,3 +59,4 @@ class Logger {
 }
 
 module.exports = new Logger();
+module.exports.logsDir = LOGS_DIR;

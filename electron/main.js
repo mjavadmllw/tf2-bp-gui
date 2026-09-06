@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, shell } = require("electron");
 const path = require("path");
+const fs = require("fs");
 
 const { SteamBotService } = require("./bot.js");
 const credentialStore = require("./credentialStore.js");
@@ -23,8 +24,8 @@ process.on("unhandledRejection", (reason) => {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 460,
-    height: 680,
+    width: 640,
+    height: 760,
     resizable: false,
     frame: false,
     backgroundColor: "#111318",
@@ -74,6 +75,14 @@ function createBot() {
   bot.on("deleteResult", (payload) => {
     if (!payload.success) logger.error(`Delete item failed (item ${payload.itemId}): ${payload.error}`);
     send("bot:deleteResult", payload);
+  });
+  bot.on("craftResult", (payload) => {
+    if (!payload.success) logger.error(`Craft failed: ${payload.error}`);
+    send("bot:craftResult", payload);
+  });
+  bot.on("sortResult", (payload) => {
+    if (!payload.success) logger.error(`Sort backpack failed: ${payload.error}`);
+    send("bot:sortResult", payload);
   });
   bot.on("slotsUpdate", (payload) => send("bot:slotsUpdate", payload));
   bot.on("gameStateUpdate", (payload) => send("bot:gameStateUpdate", payload));
@@ -125,12 +134,41 @@ app.whenReady().then(() => {
     bot.deleteItem(itemId);
   });
 
+  ipcMain.handle("item:craft", (event, itemIds) => {
+    bot.craftItems(itemIds);
+  });
+
+  ipcMain.handle("backpack:sortByName", () => {
+    bot.sortBackpackByName();
+  });
+
+  ipcMain.handle("backpack:sortDefault", () => {
+    bot.sortBackpackDefault();
+  });
+
   ipcMain.handle("game:toggle", () => {
     bot.toggleGame();
   });
 
   ipcMain.handle("log:rendererError", (event, { message, stack }) => {
     logger.error(`Renderer error: ${message}`, stack ? { stack } : null);
+  });
+
+  ipcMain.handle("app:clearData", () => {
+    if (bot) bot.logout();
+    try {
+      credentialStore.clearAll();
+    } catch (err) {
+      logger.error("Failed to clear credential store", err);
+    }
+    try {
+      if (fs.existsSync(logger.logsDir)) {
+        fs.rmSync(logger.logsDir, { recursive: true, force: true });
+      }
+    } catch (err) {
+      // Best-effort: the app is about to quit either way.
+    }
+    app.quit();
   });
 
   app.on("activate", () => {

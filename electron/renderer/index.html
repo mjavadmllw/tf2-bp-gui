@@ -13,6 +13,7 @@
     </div>
     <div class="titlebar-controls">
       <button id="btn-about" class="titlebar-btn" title="About">?</button>
+      <button id="btn-clear-data" class="titlebar-btn" title="Clear all data">🗑</button>
       <button id="btn-minimize" class="titlebar-btn" title="Minimize">–</button>
       <button id="btn-close" class="titlebar-btn titlebar-btn-close" title="Close">✕</button>
     </div>
@@ -86,6 +87,8 @@
       <div class="tab-bar">
         <button id="tab-backpack" class="tab-btn active" data-tab="backpack">Backpack</button>
         <button id="tab-inventory" class="tab-btn" data-tab="inventory">Inventory</button>
+        <button id="tab-craft" class="tab-btn" data-tab="craft">Craft</button>
+        <button id="tab-activity" class="tab-btn" data-tab="activity">Activity</button>
       </div>
 
       <div id="tab-content" class="tab-content">
@@ -114,13 +117,56 @@
         <div id="panel-inventory" class="tab-panel">
           <div class="inventory-toolbar">
             <input id="input-search" type="text" class="search-input" placeholder="Search items..." />
+            <button id="btn-sort" class="ghost-btn" title="Sort backpack">
+              <span>🔀</span>
+            </button>
             <button id="btn-inventory-reload" class="ghost-btn" title="Refresh inventory">
               <span class="refresh-icon">⟳</span>
             </button>
           </div>
+          <div class="inventory-filters">
+            <label class="select-all-field" title="Select all (unprotected, matching current filter)">
+              <input id="input-select-all" type="checkbox" />
+              <span>All</span>
+            </label>
+            <select id="select-quality-filter" class="filter-select" title="Filter by quality">
+              <option value="">All qualities</option>
+            </select>
+            <select id="select-type-filter" class="filter-select" title="Filter by type">
+              <option value="">All types</option>
+            </select>
+          </div>
           <div id="inventory-count" class="inventory-count">– items</div>
           <div id="inventory-grid" class="inventory-grid"></div>
           <p id="inventory-empty" class="muted inventory-empty hidden">No items found.</p>
+
+          <div id="inventory-bulk-bar" class="inventory-bulk-bar">
+            <span id="inventory-bulk-count" class="inventory-bulk-count">0 selected</span>
+            <div class="inventory-bulk-actions">
+              <button id="btn-bulk-cancel" class="ghost-btn small">Cancel</button>
+              <button id="btn-bulk-delete" class="danger-btn small">Delete</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Craft panel -->
+        <div id="panel-craft" class="tab-panel">
+          <div class="craft-header">
+            <span class="craft-header-title">Metal crafting</span>
+            <div class="craft-header-actions">
+              <button id="btn-craft-reload" class="ghost-btn small" title="Reload inventory">
+                <span class="refresh-icon">⟳</span>
+              </button>
+              <button id="btn-craft-help" class="ghost-btn small" title="How does this work?">?</button>
+            </div>
+          </div>
+          <div id="craft-list" class="craft-list"></div>
+        </div>
+
+        <!-- Activity panel -->
+        <div id="panel-activity" class="tab-panel">
+          <div id="activity-list" class="activity-list"></div>
+          <p id="activity-empty" class="muted activity-empty">No activity yet this session.</p>
         </div>
 
         <!-- Out-of-game overlay -->
@@ -170,6 +216,78 @@
     </div>
   </div>
 
+  <!-- Confirm bulk delete modal -->
+  <div id="modal-bulk-delete" class="modal-overlay hidden">
+    <div class="modal modal-danger">
+      <h2>Delete selected items?</h2>
+      <p class="muted">This will permanently delete <strong id="bulk-delete-count">0</strong> items from your backpack. This cannot be undone.</p>
+      <div class="modal-actions two">
+        <button id="btn-bulk-delete-cancel" class="ghost-btn full">Cancel</button>
+        <button id="btn-bulk-delete-confirm" class="danger-btn full">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bulk delete progress modal -->
+  <div id="modal-bulk-progress" class="modal-overlay hidden">
+    <div class="modal">
+      <h2 id="bulk-progress-title">Deleting items...</h2>
+      <div class="bulk-progress-bar">
+        <div id="bulk-progress-fill" class="bulk-progress-fill"></div>
+      </div>
+      <p id="bulk-progress-text" class="muted">0 of 0 deleted</p>
+      <div class="modal-actions">
+        <button id="btn-bulk-progress-close" class="primary-btn full hidden">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Craft help modal -->
+  <div id="modal-craft-help" class="modal-overlay hidden">
+    <div class="modal">
+      <h2>How metal crafting works</h2>
+      <div id="craft-help-diagram" class="craft-help-diagram"></div>
+      <p class="muted">Combine 3 of a metal to get 1 of the next tier up. Smelt 1 higher-tier metal back down into 3 of the tier below.</p>
+      <div class="modal-actions">
+        <button id="btn-craft-help-close" class="primary-btn full">Got it</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sort backpack: choose basis modal -->
+  <div id="modal-sort-choice" class="modal-overlay hidden">
+    <div class="modal">
+      <h2>Sort backpack</h2>
+      <p class="muted">Choose how you'd like to sort your backpack items.</p>
+      <div class="sort-options">
+        <label class="radio-field">
+          <input type="radio" name="sort-basis" value="name" checked />
+          <span>By name (A → Z)</span>
+        </label>
+        <label class="radio-field">
+          <input type="radio" name="sort-basis" value="default" />
+          <span>Game's default sort</span>
+        </label>
+      </div>
+      <div class="modal-actions two">
+        <button id="btn-sort-choice-cancel" class="ghost-btn full">Cancel</button>
+        <button id="btn-sort-choice-confirm" class="primary-btn full">Sort</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sort backpack: progress modal -->
+  <div id="modal-sort-progress" class="modal-overlay hidden">
+    <div class="modal">
+      <h2 id="sort-progress-title">Sorting backpack...</h2>
+      <div id="sort-progress-icon" class="sort-spinner"></div>
+      <p id="sort-progress-text" class="muted">This can take a few seconds. Please wait.</p>
+      <div class="modal-actions">
+        <button id="btn-sort-progress-close" class="primary-btn full hidden">Done</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Confirm sign out modal -->
   <div id="modal-logout" class="modal-overlay hidden">
     <div class="modal">
@@ -198,6 +316,18 @@
       <div class="modal-actions two">
         <button id="btn-buy-cancel" class="ghost-btn full">Close</button>
         <a id="link-buy-confirm" class="primary-btn full about-link" href="http://store.steampowered.com/buyitem/440/5050/1" target="_blank" rel="noopener noreferrer">Buy on Steam</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirm clear data modal -->
+  <div id="modal-clear-data" class="modal-overlay hidden">
+    <div class="modal modal-danger">
+      <h2>Clear all data?</h2>
+      <p class="muted">This will permanently delete your saved sign-in info and local logs from this computer. This cannot be undone. The app will close afterward and you'll need to sign in again.</p>
+      <div class="modal-actions two">
+        <button id="btn-clear-data-cancel" class="ghost-btn full">Cancel</button>
+        <button id="btn-clear-data-confirm" class="danger-btn full">Clear &amp; close</button>
       </div>
     </div>
   </div>
